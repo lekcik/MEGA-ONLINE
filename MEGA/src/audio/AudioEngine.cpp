@@ -67,24 +67,14 @@ float durationForSound(SoundId id) {
 
 AudioEngine::~AudioEngine() {
     if (stream_) {
-        SDL_PauseAudioStreamDevice(stream_);
-        SDL_DestroyAudioStream(stream_);
+        platform::stopAudioOutput(stream_);
         stream_ = nullptr;
     }
 }
 
-void SDLCALL AudioEngine::audioStreamCallback(void* userdata, SDL_AudioStream* stream,
-                                              int additionalAmount, int /*totalAmount*/) {
-    if (!userdata || !stream || additionalAmount <= 0) return;
-    auto* self = static_cast<AudioEngine*>(userdata);
-
-    int framesNeeded = additionalAmount / (2 * static_cast<int>(sizeof(float)));
-    if (framesNeeded <= 0) return;
-    framesNeeded = std::min(framesNeeded, 4096);
-
-    std::vector<float> buf(static_cast<size_t>(framesNeeded * 2), 0.0f);
-    self->renderSamples(buf.data(), framesNeeded);
-    SDL_PutAudioStreamData(stream, buf.data(), framesNeeded * 2 * static_cast<int>(sizeof(float)));
+void AudioEngine::audioStreamCallback(void* userdata, float* outStereo, int frames) {
+    if (!userdata || !outStereo || frames <= 0) return;
+    static_cast<AudioEngine*>(userdata)->renderSamples(outStereo, frames);
 }
 
 bool AudioEngine::init() {
@@ -95,22 +85,9 @@ bool AudioEngine::init() {
         reverbWrite_ = 0;
     }
 
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        return false;
-    }
-
-    SDL_AudioSpec spec{};
-    spec.format = SDL_AUDIO_F32;
-    spec.channels = 2;
-    spec.freq = SAMPLE_RATE;
-
-    // Asynchronous callback driven directly by SDL3's audio thread:
-    // never underruns or stutters when main-thread FPS dips!
-    stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
-                                        &AudioEngine::audioStreamCallback, this);
+    stream_ = platform::startAudioOutput(SAMPLE_RATE, &AudioEngine::audioStreamCallback, this);
     if (!stream_) return false;
     initialized_ = true;
-    SDL_ResumeAudioStreamDevice(stream_);
     return true;
 }
 

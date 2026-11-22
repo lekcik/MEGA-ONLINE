@@ -9,35 +9,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(SDL3 CONFIG QUIET)
-if(NOT SDL3_FOUND)
-    message(STATUS "SDL3 not found on system - fetching SDL3 3.2.28 via CMake FetchContent (static build, zero manual dependencies)...")
-    include(FetchContent)
-    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-    set(SDL_STATIC ON CACHE BOOL "" FORCE)
-    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        SDL3
-        URL https://github.com/libsdl-org/SDL/releases/download/release-3.2.28/SDL3-3.2.28.tar.gz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(SDL3)
-endif()
-
-if(TARGET SDL3::SDL3)
-    set(MEGA_SDL3_TARGET SDL3::SDL3)
-elseif(TARGET SDL3::SDL3-static)
-    set(MEGA_SDL3_TARGET SDL3::SDL3-static)
-else()
-    message(FATAL_ERROR "SDL3 target not available after find_package / FetchContent")
-endif()
-
-find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 
 add_executable(mega
     src/main.cpp
+    src/core/Platform.cpp
     src/net/NetSession.cpp
     src/render/GlApi.cpp
     src/render/Shader.cpp
@@ -58,12 +34,15 @@ add_executable(mega
 )
 
 target_include_directories(mega PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(mega PRIVATE
-    ${MEGA_SDL3_TARGET}
-    OpenGL::GL
-)
+target_link_libraries(mega PRIVATE Threads::Threads)
+
 if(WIN32)
-    target_link_libraries(mega PRIVATE ws2_32)
+    target_link_libraries(mega PRIVATE opengl32 ws2_32 winmm gdi32 user32)
+    if(MINGW)
+        target_link_options(mega PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+elseif(UNIX)
+    target_link_libraries(mega PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 if(MSVC)
@@ -90,6 +69,7 @@ if(GTest_FOUND)
     enable_testing()
     add_executable(mega_tests
         tests/CoreTests.cpp
+        src/core/Platform.cpp
         src/net/NetSession.cpp
         src/world/WorldGrid.cpp
         src/world/LightBaker.cpp
@@ -101,9 +81,11 @@ if(GTest_FOUND)
         src/audio/AudioEngine.cpp
     )
     target_include_directories(mega_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(mega_tests PRIVATE GTest::gtest_main ${MEGA_SDL3_TARGET})
+    target_link_libraries(mega_tests PRIVATE GTest::gtest_main Threads::Threads)
     if(WIN32)
-        target_link_libraries(mega_tests PRIVATE ws2_32)
+        target_link_libraries(mega_tests PRIVATE opengl32 ws2_32 winmm gdi32 user32)
+    elseif(UNIX)
+        target_link_libraries(mega_tests PRIVATE ${CMAKE_DL_LIBS})
     endif()
     include(GoogleTest)
     gtest_discover_tests(mega_tests)

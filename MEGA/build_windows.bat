@@ -1,64 +1,90 @@
 @echo off
 setlocal enabledelayedexpansion
-echo === Building MEGA (1v1 Zero-Dep P2P Edition) for Windows ===
-echo SDL3 is automatically downloaded and statically linked via CMake.
-echo No manual SDL3, libepoxy, or vcpkg setup required!
-echo.
+cd /d "%~dp0"
 
-where cmake >nul 2>nul
+echo === MEGA // Zero-Dependency Windows Build & Launch ===
+
+set "GPP="
+where g++ >nul 2>nul
+if %errorlevel%==0 (
+    for /f "delims=" %%I in ('where g++') do (
+        set "GPP=%%I"
+        goto :found_gpp
+    )
+)
+
+for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*") do (
+    if exist "%%~fD\mingw64\bin\g++.exe" (
+        set "GPP=%%~fD\mingw64\bin\g++.exe"
+        set "PATH=%%~fD\mingw64\bin;%PATH%"
+        goto :found_gpp
+    )
+)
+
+for %%P in (
+    "C:\msys64\mingw64\bin"
+    "C:\msys64\ucrt64\bin"
+    "C:\mingw64\bin"
+    "C:\WinLibs\mingw64\bin"
+) do (
+    if exist "%%~P\g++.exe" (
+        set "GPP=%%~P\g++.exe"
+        set "PATH=%%~P;%PATH%"
+        goto :found_gpp
+    )
+)
+
+echo Compiler not found locally. Installing WinLibs GCC automatically via winget...
+winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT --accept-package-agreements --accept-source-agreements
+for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*") do (
+    if exist "%%~fD\mingw64\bin\g++.exe" (
+        set "GPP=%%~fD\mingw64\bin\g++.exe"
+        set "PATH=%%~fD\mingw64\bin;%PATH%"
+        goto :found_gpp
+    )
+)
+
+echo.
+echo [ERROR] Could not locate or install g++.exe automatically.
+pause
+exit /b 1
+
+:found_gpp
+echo Using compiler: "%GPP%"
+if not exist "build" mkdir "build"
+
+echo Compiling MEGA (no external downloads required)...
+"%GPP%" -std=c++20 -O2 -Isrc ^
+    src/main.cpp ^
+    src/core/Platform.cpp ^
+    src/net/NetSession.cpp ^
+    src/render/GlApi.cpp ^
+    src/render/Shader.cpp ^
+    src/render/Framebuffer.cpp ^
+    src/render/TextureAtlas.cpp ^
+    src/render/WorldMesher.cpp ^
+    src/render/BillboardRenderer.cpp ^
+    src/render/RobotRenderer.cpp ^
+    src/render/HudRenderer.cpp ^
+    src/world/WorldGrid.cpp ^
+    src/world/LightBaker.cpp ^
+    src/world/gen/MegaGenerator.cpp ^
+    src/game/Player.cpp ^
+    src/game/GameWorld.cpp ^
+    src/game/Inventory3D.cpp ^
+    src/game/LockpickMinigame.cpp ^
+    src/audio/AudioEngine.cpp ^
+    -static -static-libgcc -static-libstdc++ ^
+    -lopengl32 -lws2_32 -lwinmm -lgdi32 -luser32 ^
+    -o build\mega.exe
+
 if errorlevel 1 (
-    echo [ERROR] CMake was not found in PATH.
-    echo Install CMake from https://cmake.org/download/ and ensure a C++20 compiler
-    echo ^(Visual Studio Build Tools / VS Community OR MinGW-w64 g++^) is installed.
+    echo.
+    echo [ERROR] Compilation failed!
+    pause
     exit /b 1
 )
 
-where cl >nul 2>nul
-if %errorlevel%==0 (
-    echo Using MSVC / Visual Studio toolchain
-    cmake -B build -DCMAKE_BUILD_TYPE=Release
-    if errorlevel 1 goto :fail
-    cmake --build build --config Release
-    if errorlevel 1 goto :fail
-    echo.
-    if exist "build\Release\mega.exe" (
-        echo Build complete! Run: build\Release\mega.exe
-    ) else (
-        echo Build complete! Run: build\mega.exe
-    )
-    goto :eof
-)
-
-where g++ >nul 2>nul
-if %errorlevel%==0 (
-    echo Using MinGW g++ toolchain
-    cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release 2>nul || cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-    if errorlevel 1 goto :fail
-    cmake --build build
-    if errorlevel 1 goto :fail
-    echo.
-    echo Build complete! Run: build\mega.exe
-    goto :eof
-)
-
-echo Trying default CMake Visual Studio generator...
-cmake -B build
-if errorlevel 1 goto :no_compiler
-cmake --build build --config Release
-if errorlevel 1 goto :fail
-echo.
-echo Build complete! Run: build\Release\mega.exe
-goto :eof
-
-:no_compiler
-echo.
-echo [ERROR] No C++20 compiler detected.
-echo Install either:
-echo   1. Visual Studio Build Tools ^(Desktop development with C++^) from https://visualstudio.microsoft.com/downloads/
-echo   OR
-echo   2. WinLibs / MinGW-w64 g++ + CMake
-exit /b 1
-
-:fail
-echo Build failed! Check CMake/compiler output above.
-exit /b 1
+if exist "loot_tables.cfg" copy /Y "loot_tables.cfg" "build\loot_tables.cfg" >nul
+echo Build succeeded: build\mega.exe
+exit /b 0

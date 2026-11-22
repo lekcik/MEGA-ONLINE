@@ -1,6 +1,7 @@
 #include "audio/AudioEngine.hpp"
 #include "core/Config.hpp"
 #include "core/Math3D.hpp"
+#include "core/Platform.hpp"
 #include "game/GameWorld.hpp"
 #include "net/NetSession.hpp"
 #include "render/BillboardRenderer.hpp"
@@ -12,7 +13,6 @@
 #include "render/TextureAtlas.hpp"
 #include "render/WorldMesher.hpp"
 
-#include <SDL3/SDL.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -271,43 +271,20 @@ int main(int argc, char** argv) {
         if (worldSeed == 0) worldSeed = 0x4D4547410001ULL;
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
-        return 1;
-    }
-
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-
-    SDL_Window* window = SDL_CreateWindow(
+    platform::Window* window = platform::createWindow(
         "MEGA // 1v1 Survival vs Stalker",
-        cfg::WINDOW_WIDTH, cfg::WINDOW_HEIGHT,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+        cfg::WINDOW_WIDTH, cfg::WINDOW_HEIGHT
     );
     if (!window) {
-        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_GLContext glCtx = SDL_GL_CreateContext(window);
-    if (!glCtx) {
-        std::cerr << "SDL_GL_CreateContext failed: " << SDL_GetError() << "\n";
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        std::cerr << "Failed to create OpenGL 3.3 Core window\n";
         return 1;
     }
     if (!initGlApi()) {
         std::cerr << "Failed to initialize OpenGL 3.3 Core functions\n";
-        SDL_GL_DestroyContext(glCtx);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        platform::destroyWindow(window);
         return 1;
     }
-    SDL_GL_SetSwapInterval(1);
+    platform::setSwapInterval(1);
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -426,8 +403,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
     bool mouseCaptured = (!menu.visible && !visualTest);
-    SDL_SetWindowRelativeMouseMode(window, mouseCaptured);
-    bool keyDown[SDL_SCANCODE_COUNT] = {false};
+    platform::setRelativeMouseMode(window, mouseCaptured);
 
     // Visual test state machine (--visual-test)
     struct VisualTestState {
@@ -448,7 +424,7 @@ int main(int argc, char** argv) {
         vt.initialized = true;
     }
 
-    uint64_t prevTicks = SDL_GetTicks();
+    uint64_t prevTicks = platform::getTicksMs();
     float accumulator = 0.0f;
     float totalTime = 0.0f;
 
@@ -518,10 +494,8 @@ int main(int argc, char** argv) {
         }
     };
 
-    bool textInputActive = false;
-
     while (running) {
-        uint64_t nowTicks = SDL_GetTicks();
+        uint64_t nowTicks = platform::getTicksMs();
         float frameDt = static_cast<float>(nowTicks - prevTicks) / 1000.0f;
         prevTicks = nowTicks;
         if (frameDt > 0.1f) frameDt = 0.1f;
@@ -548,24 +522,16 @@ int main(int argc, char** argv) {
                 menu.activeMatch = true;
                 menu.statusMessage.clear();
                 mouseCaptured = true;
-                SDL_SetWindowRelativeMouseMode(window, true);
+                platform::setRelativeMouseMode(window, true);
                 std::cout << "[NET] Synced Client match seed=" << net.negotiatedSeed()
                           << " round=" << clientSyncedRoundId
                           << " role=" << (gw.localRole == PlayerRole::Monster ? "MONSTER" : "HUMAN") << "\n";
             }
         }
 
-        // Toggle SDL text input when typing in Host/Join menus
-        bool wantTextInput = menu.visible && (menu.screen == 1 || menu.screen == 2);
-        if (wantTextInput != textInputActive) {
-            textInputActive = wantTextInput;
-            if (textInputActive) SDL_StartTextInput(window);
-            else SDL_StopTextInput(window);
-        }
-
         if (menu.visible && mouseCaptured) {
             mouseCaptured = false;
-            SDL_SetWindowRelativeMouseMode(window, false);
+            platform::setRelativeMouseMode(window, false);
         }
 
         accumulator += frameDt * gw.godTimeScale;
@@ -577,35 +543,30 @@ int main(int argc, char** argv) {
         // Local per-frame Monster one-shot triggers (for Solo/Host Monster)
         MonsterInput localMonsterOneShot;
 
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_EVENT_QUIT) {
+        platform::Event ev{};
+        while (platform::pollEvent(window, ev)) {
+            if (ev.type == platform::EventType::Quit) {
                 running = false;
-            } else if (ev.type == SDL_EVENT_WINDOW_RESIZED) {
-                winW = ev.window.data1;
-                winH = ev.window.data2;
-            } else if (ev.type == SDL_EVENT_WINDOW_FOCUS_LOST ||
-                       ev.type == SDL_EVENT_WINDOW_MINIMIZED) {
+            } else if (ev.type == platform::EventType::WindowResized) {
+                winW = ev.width;
+                winH = ev.height;
+            } else if (ev.type == platform::EventType::FocusLost) {
                 mouseCaptured = false;
                 lmbDown = false;
                 eDown = false;
-                SDL_SetWindowRelativeMouseMode(window, false);
-                std::fill(std::begin(keyDown), std::end(keyDown), false);
-            } else if (ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
-                       ev.type == SDL_EVENT_WINDOW_RESTORED) {
-                prevTicks = SDL_GetTicks();
+                platform::setRelativeMouseMode(window, false);
+            } else if (ev.type == platform::EventType::FocusGained) {
+                prevTicks = platform::getTicksMs();
                 accumulator = 0.0f;
-                std::fill(std::begin(keyDown), std::end(keyDown), false);
-            } else if (ev.type == SDL_EVENT_KEY_UP) {
-                if (ev.key.scancode < SDL_SCANCODE_COUNT) {
-                    keyDown[ev.key.scancode] = false;
-                }
-                if (ev.key.key == SDLK_E) eDown = false;
+            } else if (ev.type == platform::EventType::KeyUp) {
+                if (ev.key == platform::Key::E) eDown = false;
             } else if (menu.visible) {
                 // =============================================================
                 // LOBBY MENU INPUT HANDLING
                 // =============================================================
-                if (ev.type == SDL_EVENT_TEXT_INPUT) {
+                bool typingText = (ev.type == platform::EventType::TextInput) ||
+                                  (ev.type == platform::EventType::KeyDown && ev.textChar != 0);
+                if (typingText) {
                     std::string* targetStr = nullptr;
                     size_t maxLen = 24;
                     bool allowCodeChars = false;
@@ -624,46 +585,47 @@ int main(int argc, char** argv) {
                         targetStr = &menu.joinPortStr;
                         maxLen = 5;
                     }
-                    if (targetStr && ev.text.text) {
-                        for (const char* p = ev.text.text; *p; ++p) {
-                            char ch = *p;
-                            if (allowCodeChars && ch >= 'a' && ch <= 'z') {
-                                ch = static_cast<char>(ch - 'a' + 'A');
-                            }
-                            bool valid = (ch >= '0' && ch <= '9') ||
-                                         (allowCodeChars && (ch == '.' || ch == ':' || ch == '-' || (ch >= 'A' && ch <= 'Z')));
-                            if (valid && targetStr->size() < maxLen) {
-                                targetStr->push_back(ch);
-                            }
+                    if (targetStr) {
+                        char ch = ev.textChar;
+                        if (allowCodeChars && ch >= 'a' && ch <= 'z') {
+                            ch = static_cast<char>(ch - 'a' + 'A');
+                        }
+                        bool valid = (ch >= '0' && ch <= '9') ||
+                                     (allowCodeChars && (ch == '.' || ch == ':' || ch == '-' || (ch >= 'A' && ch <= 'Z')));
+                        if (valid && targetStr->size() < maxLen) {
+                            targetStr->push_back(ch);
                         }
                     }
-                } else if (ev.type == SDL_EVENT_KEY_DOWN) {
+                }
+                if (ev.type == platform::EventType::KeyDown) {
                     int maxItems = (menu.screen == 0) ? (menu.activeMatch ? 4 : 3) : (menu.screen == 1 ? 5 : 4);
-                    if (ev.key.key == SDLK_UP || ev.key.key == SDLK_W) {
+                    bool inTextField = (menu.screen == 1 && (menu.cursor == 1 || menu.cursor == 2)) ||
+                                       (menu.screen == 2 && (menu.cursor == 0 || menu.cursor == 1));
+                    if (ev.key == platform::Key::Up || (!inTextField && ev.key == platform::Key::W)) {
                         menu.cursor = (menu.cursor + maxItems - 1) % maxItems;
-                    } else if (ev.key.key == SDLK_DOWN || ev.key.key == SDLK_S || ev.key.key == SDLK_TAB) {
+                    } else if (ev.key == platform::Key::Down || (!inTextField && ev.key == platform::Key::S) || ev.key == platform::Key::Tab) {
                         menu.cursor = (menu.cursor + 1) % maxItems;
-                    } else if (ev.key.key == SDLK_LEFT || ev.key.key == SDLK_RIGHT) {
+                    } else if (ev.key == platform::Key::Left || ev.key == platform::Key::Right) {
                         if (menu.screen == 1 && menu.cursor == 0) {
                             menu.hostRole = (menu.hostRole == PlayerRole::Human) ? PlayerRole::Monster : PlayerRole::Human;
                         }
-                    } else if (ev.key.key == SDLK_BACKSPACE) {
+                    } else if (ev.key == platform::Key::Backspace) {
                         std::string* targetStr = nullptr;
                         if (menu.screen == 1 && menu.cursor == 1) targetStr = &menu.hostPortStr;
                         else if (menu.screen == 1 && menu.cursor == 2) targetStr = &menu.hostGuestCodeStr;
                         else if (menu.screen == 2 && menu.cursor == 0) targetStr = &menu.joinIpStr;
                         else if (menu.screen == 2 && menu.cursor == 1) targetStr = &menu.joinPortStr;
                         if (targetStr && !targetStr->empty()) targetStr->pop_back();
-                    } else if (ev.key.key == SDLK_ESCAPE || ev.key.key == SDLK_F1) {
+                    } else if (ev.key == platform::Key::Escape || ev.key == platform::Key::F1) {
                         if (menu.screen != 0) {
                             menu.screen = 0;
                             menu.cursor = 0;
                         } else if (menu.activeMatch) {
                             menu.visible = false;
                             mouseCaptured = true;
-                            SDL_SetWindowRelativeMouseMode(window, true);
+                            platform::setRelativeMouseMode(window, true);
                         }
-                    } else if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) {
+                    } else if (ev.key == platform::Key::Enter) {
                         if (menu.screen == 0) {
                             if (menu.cursor == 0) {
                                 menu.screen = 1;
@@ -684,11 +646,11 @@ int main(int argc, char** argv) {
                             } else if (menu.cursor == 2) {
                                 startSoloGame();
                                 mouseCaptured = true;
-                                SDL_SetWindowRelativeMouseMode(window, true);
+                                platform::setRelativeMouseMode(window, true);
                             } else if (menu.cursor == 3 && menu.activeMatch) {
                                 menu.visible = false;
                                 mouseCaptured = true;
-                                SDL_SetWindowRelativeMouseMode(window, true);
+                                platform::setRelativeMouseMode(window, true);
                             }
                         } else if (menu.screen == 1) {
                             if (menu.cursor == 0) {
@@ -699,10 +661,10 @@ int main(int argc, char** argv) {
                             } else {
                                 int p = std::atoi(menu.hostPortStr.c_str());
                                 uint16_t port = (p > 0 && p <= 65535) ? static_cast<uint16_t>(p) : NetSession::DEFAULT_PORT;
-                                worldSeed ^= static_cast<uint64_t>(SDL_GetTicks());
+                                worldSeed ^= platform::getTicksMs();
                                 if (startHostGame(port, menu.hostRole, menu.hostGuestCodeStr)) {
                                     mouseCaptured = true;
-                                    SDL_SetWindowRelativeMouseMode(window, true);
+                                    platform::setRelativeMouseMode(window, true);
                                 }
                             }
                         } else if (menu.screen == 2) {
@@ -718,24 +680,20 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-            } else if (ev.type == SDL_EVENT_KEY_DOWN) {
-                if (ev.key.scancode < SDL_SCANCODE_COUNT) {
-                    keyDown[ev.key.scancode] = true;
-                }
-
-                if (ev.key.key == SDLK_F1) {
+            } else if (ev.type == platform::EventType::KeyDown) {
+                if (ev.key == platform::Key::F1) {
                     menu.visible = true;
                     menu.screen = 0;
                     menu.cursor = 0;
                     mouseCaptured = false;
-                    SDL_SetWindowRelativeMouseMode(window, false);
+                    platform::setRelativeMouseMode(window, false);
                     continue;
                 }
 
                 bool isMonsterRole = (gw.onlineMode && gw.localRole == PlayerRole::Monster);
                 bool isClient = (net.mode() == NetMode::Client);
 
-                if (ev.key.key == SDLK_ESCAPE) {
+                if (ev.key == platform::Key::Escape) {
                     if (!isMonsterRole && gw.lockpick.active) {
                         if (isClient) clientPending.flags |= (1u << 14);
                         else gw.lockpick.close();
@@ -761,29 +719,29 @@ int main(int argc, char** argv) {
                         else gw.toggleBackpackInHands();
                     } else {
                         mouseCaptured = !mouseCaptured;
-                        SDL_SetWindowRelativeMouseMode(window, mouseCaptured);
+                        platform::setRelativeMouseMode(window, mouseCaptured);
                     }
-                } else if (ev.key.key == SDLK_M) {
+                } else if (ev.key == platform::Key::M) {
                     gw.showMinimap = !gw.showMinimap;
-                } else if (ev.key.key == SDLK_F5) {
+                } else if (ev.key == platform::Key::F5) {
                     reloadConfig();
-                } else if (ev.key.key == SDLK_Q && (ev.key.mod & SDL_KMOD_CTRL)) {
+                } else if (ev.key == platform::Key::Q && ev.ctrl) {
                     running = false;
                 } else if (isMonsterRole) {
                     // =========================================================
                     // MONSTER CONTROLS (No backpack/gun/item keys)
                     // =========================================================
-                    if (ev.key.key == SDLK_N) {
+                    if (ev.key == platform::Key::N) {
                         if (isClient) clientPending.flags |= (1u << 3);
                         else localMonsterOneShot.nightVisionToggle = true;
-                    } else if (ev.key.key == SDLK_SPACE) {
+                    } else if (ev.key == platform::Key::Space) {
                         if (isClient) clientPending.flags |= (1u << 2);
                         else localMonsterOneShot.dashPressed = true;
-                    } else if (ev.key.key == SDLK_E) {
+                    } else if (ev.key == platform::Key::E) {
                         eDown = true;
                         if (isClient) clientPending.flags |= (1u << 6);
                         else localMonsterOneShot.interactPressed = true;
-                    } else if (ev.key.key == SDLK_R && net.mode() == NetMode::Host && gw.gameOver) {
+                    } else if (ev.key == platform::Key::R && net.mode() == NetMode::Host && gw.gameOver) {
                         worldSeed += 1337ULL;
                         uint32_t nextRound = gw.roundId + 1;
                         gw.startOnlineMatch(worldSeed, net.hostRole(), nextRound);
@@ -795,19 +753,19 @@ int main(int argc, char** argv) {
                     // =========================================================
                     // HUMAN CONTROLS (No shooting / no weapon switching!)
                     // =========================================================
-                    if (ev.key.key == SDLK_TAB || ev.key.key == SDLK_I) {
+                    if (ev.key == platform::Key::Tab || ev.key == platform::Key::I) {
                         if (isClient) clientPending.flags |= (1u << 10);
                         else gw.toggleBackpackInHands();
-                    } else if (ev.key.key == SDLK_B) {
+                    } else if (ev.key == platform::Key::B) {
                         if (isClient) clientPending.flags |= (1u << 9);
                         else gw.togglePlaceBackpackOnGround(audio);
-                    } else if (ev.key.key == SDLK_T) {
+                    } else if (ev.key == platform::Key::T) {
                         if (isClient) clientPending.flags |= (1u << 11);
                         else gw.rotateActiveItem(0);
-                    } else if (ev.key.key == SDLK_Y) {
+                    } else if (ev.key == platform::Key::Y) {
                         if (isClient) clientPending.flags |= (1u << 13);
                         else gw.rotateActiveItem(2);
-                    } else if (ev.key.key == SDLK_F) {
+                    } else if (ev.key == platform::Key::F) {
                         if (isClient) {
                             clientPending.flags |= (1u << 3);
                         } else if (gw.inventory.hasFlashlight) {
@@ -818,7 +776,7 @@ int main(int argc, char** argv) {
                                 audio.play3D(SoundId::FlashlightClick, gw.player.eyePosition(), 0.45f);
                             }
                         }
-                    } else if (ev.key.key == SDLK_E && gw.backpackMode != BackpackMode::InHands) {
+                    } else if (ev.key == platform::Key::E && gw.backpackMode != BackpackMode::InHands) {
                         if (isClient) {
                             clientPending.flags |= (1u << 6);
                         } else {
@@ -829,7 +787,7 @@ int main(int argc, char** argv) {
                                 gw.endInteract();
                             }
                         }
-                    } else if (ev.key.key == SDLK_1) {
+                    } else if (ev.key == platform::Key::Num1) {
                         if (isClient) {
                             if (!gw.availableCrafts.empty()) clientPending.craftOptionIdx = 0;
                             else clientPending.quickUseSlot = 0;
@@ -837,7 +795,7 @@ int main(int argc, char** argv) {
                             if (!gw.availableCrafts.empty()) gw.performCraft(0, audio);
                             else gw.useInventoryItem(ItemType::Battery, audio);
                         }
-                    } else if (ev.key.key == SDLK_2) {
+                    } else if (ev.key == platform::Key::Num2) {
                         if (isClient) {
                             if (gw.availableCrafts.size() >= 2) clientPending.craftOptionIdx = 1;
                             else clientPending.quickUseSlot = 1;
@@ -845,7 +803,7 @@ int main(int argc, char** argv) {
                             if (gw.availableCrafts.size() >= 2) gw.performCraft(1, audio);
                             else gw.useInventoryItem(ItemType::Food, audio);
                         }
-                    } else if (ev.key.key == SDLK_3) {
+                    } else if (ev.key == platform::Key::Num3) {
                         if (isClient) {
                             if (gw.availableCrafts.size() >= 3) clientPending.craftOptionIdx = 2;
                             else clientPending.quickUseSlot = 2;
@@ -853,7 +811,7 @@ int main(int argc, char** argv) {
                             if (gw.availableCrafts.size() >= 3) gw.performCraft(2, audio);
                             else gw.useInventoryItem(ItemType::Water, audio);
                         }
-                    } else if (ev.key.key == SDLK_G && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::G && !gw.onlineMode) {
                         gw.godMode = !gw.godMode;
                         if (!gw.godMode) {
                             gw.godNoclip = false;
@@ -861,23 +819,23 @@ int main(int argc, char** argv) {
                             gw.godSpeedMult = 1.0f;
                             gw.godTimeScale = 1.0f;
                         }
-                    } else if (ev.key.key == SDLK_N && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::N && !gw.onlineMode) {
                         gw.godNoclip = !gw.godNoclip;
                         if (gw.godNoclip) gw.godMode = true;
-                    } else if (ev.key.key == SDLK_V && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::V && !gw.onlineMode) {
                         gw.godInvisible = !gw.godInvisible;
                         if (gw.godInvisible) gw.godMode = true;
-                    } else if (ev.key.key == SDLK_RIGHTBRACKET && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::RightBracket && !gw.onlineMode) {
                         gw.godMode = true;
                         gw.godSpeedMult = std::min(8.0f, gw.godSpeedMult * 2.0f);
-                    } else if (ev.key.key == SDLK_LEFTBRACKET && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::LeftBracket && !gw.onlineMode) {
                         gw.godSpeedMult = std::max(1.0f, gw.godSpeedMult * 0.5f);
-                    } else if (ev.key.key == SDLK_PERIOD && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::Period && !gw.onlineMode) {
                         gw.godMode = true;
                         gw.godTimeScale = std::min(8.0f, gw.godTimeScale * 2.0f);
-                    } else if (ev.key.key == SDLK_COMMA && !gw.onlineMode) {
+                    } else if (ev.key == platform::Key::Comma && !gw.onlineMode) {
                         gw.godTimeScale = std::max(1.0f, gw.godTimeScale * 0.5f);
-                    } else if (ev.key.key == SDLK_R) {
+                    } else if (ev.key == platform::Key::R) {
                         if (gw.draggingItem || gw.hasHeldItem) {
                             if (isClient) clientPending.flags |= (1u << 12);
                             else gw.rotateActiveItem(1);
@@ -897,13 +855,13 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-            } else if (ev.type == SDL_EVENT_MOUSE_MOTION) {
+            } else if (ev.type == platform::EventType::MouseMove) {
                 bool isMonsterRole = (gw.onlineMode && gw.localRole == PlayerRole::Monster);
                 bool isClient = (net.mode() == NetMode::Client);
                 bool freeCursor = !isMonsterRole && (gw.backpackMode == BackpackMode::InHands || gw.draggingItem);
                 if (freeCursor) {
-                    mouseWinX = ev.motion.x;
-                    mouseWinY = ev.motion.y;
+                    mouseWinX = ev.x;
+                    mouseWinY = ev.y;
                     if (rmbDownInPack && gw.backpackMode == BackpackMode::InHands && !gw.draggingItem) {
                         float dx = mouseWinX - rmbLastX;
                         float dy = mouseWinY - rmbLastY;
@@ -926,53 +884,53 @@ int main(int argc, char** argv) {
                     if (isMonsterRole) {
                         if (eDown) {
                             if (isClient) {
-                                clientPending.dragDx += ev.motion.xrel;
-                                clientPending.dragDy += ev.motion.yrel;
+                                clientPending.dragDx += ev.xrel;
+                                clientPending.dragDy += ev.yrel;
                             } else {
-                                localMonsterOneShot.dragDx += ev.motion.xrel;
-                                localMonsterOneShot.dragDy += ev.motion.yrel;
+                                localMonsterOneShot.dragDx += ev.xrel;
+                                localMonsterOneShot.dragDy += ev.yrel;
                             }
                         } else {
-                            yawDelta += ev.motion.xrel * cfg::MOUSE_SENS;
-                            pitchDelta -= ev.motion.yrel * cfg::MOUSE_SENS;
+                            yawDelta += ev.xrel * cfg::MOUSE_SENS;
+                            pitchDelta -= ev.yrel * cfg::MOUSE_SENS;
                         }
                     } else {
                         if (gw.lockpick.active) {
                             if (isClient) {
-                                clientPending.dragDx += ev.motion.xrel;
-                                clientPending.dragDy += ev.motion.yrel;
+                                clientPending.dragDx += ev.xrel;
+                                clientPending.dragDy += ev.yrel;
                             } else {
-                                gw.lockpick.handleMouseMove(ev.motion.xrel, ev.motion.yrel);
+                                gw.lockpick.handleMouseMove(ev.xrel, ev.yrel);
                             }
                         } else if (lmbDown && (gw.grabbedDoorIdx >= 0 || isClient)) {
                             if (isClient) {
-                                clientPending.dragDx += ev.motion.xrel;
-                                clientPending.dragDy += ev.motion.yrel;
+                                clientPending.dragDx += ev.xrel;
+                                clientPending.dragDy += ev.yrel;
                             } else {
-                                gw.dragGrabbedDoor(ev.motion.xrel, ev.motion.yrel);
+                                gw.dragGrabbedDoor(ev.xrel, ev.yrel);
                             }
                         } else {
-                            yawDelta += ev.motion.xrel * cfg::MOUSE_SENS;
-                            pitchDelta -= ev.motion.yrel * cfg::MOUSE_SENS;
+                            yawDelta += ev.xrel * cfg::MOUSE_SENS;
+                            pitchDelta -= ev.yrel * cfg::MOUSE_SENS;
                         }
                     }
                 }
-            } else if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            } else if (ev.type == platform::EventType::MouseButtonUp) {
                 bool isMonsterRole = (gw.onlineMode && gw.localRole == PlayerRole::Monster);
                 bool isClient = (net.mode() == NetMode::Client);
-                if (ev.button.button == SDL_BUTTON_LEFT) {
+                if (ev.button == platform::MouseButton::Left) {
                     lmbDown = false;
                     if (!isMonsterRole && !isClient) {
                         gw.endInteract();
                     }
-                } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                } else if (ev.button == platform::MouseButton::Right) {
                     if (!isMonsterRole && rmbDownInPack) {
                         bool wasSpin = rmbRotatedPack;
                         rmbDownInPack = false;
                         rmbRotatedPack = false;
                         if (!wasSpin && gw.backpackMode == BackpackMode::InHands) {
-                            mouseWinX = ev.button.x;
-                            mouseWinY = ev.button.y;
+                            mouseWinX = ev.x;
+                            mouseWinY = ev.y;
                             Vec3 ro, rd;
                             computeCursorRay(ro, rd);
                             if (isClient) {
@@ -986,16 +944,16 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-            } else if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            } else if (ev.type == platform::EventType::MouseButtonDown) {
                 bool isMonsterRole = (gw.onlineMode && gw.localRole == PlayerRole::Monster);
                 bool isClient = (net.mode() == NetMode::Client);
                 bool freeCursor = !isMonsterRole && (gw.backpackMode == BackpackMode::InHands || gw.draggingItem);
                 if (freeCursor) {
-                    mouseWinX = ev.button.x;
-                    mouseWinY = ev.button.y;
+                    mouseWinX = ev.x;
+                    mouseWinY = ev.y;
                     Vec3 ro, rd;
                     computeCursorRay(ro, rd);
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
+                    if (ev.button == platform::MouseButton::Left) {
                         if (isClient) {
                             clientPending.flags |= (1u << 4);
                             clientPending.rayOrig = ro;
@@ -1004,7 +962,7 @@ int main(int argc, char** argv) {
                         } else {
                             gw.handlePrimaryClick(ro, rd, audio);
                         }
-                    } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                    } else if (ev.button == platform::MouseButton::Right) {
                         if (gw.backpackMode == BackpackMode::InHands && !gw.draggingItem) {
                             rmbDownInPack = true;
                             rmbRotatedPack = false;
@@ -1025,19 +983,19 @@ int main(int argc, char** argv) {
                     }
                 } else if (!mouseCaptured) {
                     mouseCaptured = true;
-                    SDL_SetWindowRelativeMouseMode(window, true);
+                    platform::setRelativeMouseMode(window, true);
                 } else if (isMonsterRole) {
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
+                    if (ev.button == platform::MouseButton::Left) {
                         if (isClient) clientPending.flags |= (1u << 4);
                         else localMonsterOneShot.attackPressed = true;
-                    } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                    } else if (ev.button == platform::MouseButton::Right) {
                         if (isClient) clientPending.flags |= (1u << 2);
                         else localMonsterOneShot.dashPressed = true;
                     }
                 } else {
                     Vec3 ro, rd;
                     computeCursorRay(ro, rd);
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
+                    if (ev.button == platform::MouseButton::Left) {
                         lmbDown = true;
                         if (isClient) {
                             clientPending.flags |= (1u << 4);
@@ -1048,7 +1006,7 @@ int main(int argc, char** argv) {
                             // Strictly interaction + melee weapons ONLY (NO SHOOTING!)
                             gw.handlePrimaryClick(ro, rd, audio);
                         }
-                    } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                    } else if (ev.button == platform::MouseButton::Right) {
                         if (isClient) {
                             clientPending.flags |= (1u << 5);
                             clientPending.rayOrig = ro;
@@ -1068,27 +1026,26 @@ int main(int argc, char** argv) {
                               (gw.backpackMode == BackpackMode::InHands || gw.draggingItem);
         if (wantFreeCursor != prevFreeCursor) {
             prevFreeCursor = wantFreeCursor;
-            SDL_SetWindowRelativeMouseMode(window, !wantFreeCursor && mouseCaptured && !visualTest);
+            platform::setRelativeMouseMode(window, !wantFreeCursor && mouseCaptured && !visualTest);
             if (wantFreeCursor) {
                 mouseWinX = static_cast<float>(winW) * 0.5f;
                 mouseWinY = static_cast<float>(winH) * 0.5f;
             }
         }
 
-        const bool* sdlKeys = SDL_GetKeyboardState(nullptr);
-        auto isHeld = [&](SDL_Scancode sc) {
-            return !menu.visible && (keyDown[sc] || (sdlKeys && sdlKeys[sc]));
+        auto isHeld = [&](platform::Key k) {
+            return !menu.visible && platform::isKeyDown(window, k);
         };
 
         PlayerInput input;
-        if (isHeld(SDL_SCANCODE_W)) input.moveForward += 1.0f;
-        if (isHeld(SDL_SCANCODE_S)) input.moveForward -= 1.0f;
-        if (isHeld(SDL_SCANCODE_D)) input.moveRight += 1.0f;
-        if (isHeld(SDL_SCANCODE_A)) input.moveRight -= 1.0f;
-        if (isHeld(SDL_SCANCODE_SPACE)) input.moveUp += 1.0f;
-        if (isHeld(SDL_SCANCODE_LCTRL) || isHeld(SDL_SCANCODE_C)) input.moveUp -= 1.0f;
-        input.jump = isHeld(SDL_SCANCODE_SPACE);
-        input.sprint = isHeld(SDL_SCANCODE_LSHIFT);
+        if (isHeld(platform::Key::W)) input.moveForward += 1.0f;
+        if (isHeld(platform::Key::S)) input.moveForward -= 1.0f;
+        if (isHeld(platform::Key::D)) input.moveRight += 1.0f;
+        if (isHeld(platform::Key::A)) input.moveRight -= 1.0f;
+        if (isHeld(platform::Key::Space)) input.moveUp += 1.0f;
+        if (isHeld(platform::Key::LCtrl) || isHeld(platform::Key::C)) input.moveUp -= 1.0f;
+        input.jump = isHeld(platform::Key::Space);
+        input.sprint = isHeld(platform::Key::LShift);
         input.noclip = gw.godNoclip;
         input.yawDelta = yawDelta;
         input.pitchDelta = pitchDelta;
@@ -1376,12 +1333,10 @@ int main(int argc, char** argv) {
         }
 
         fbo.present(winW, winH, renderAsMonster && gw.monster.nightVision);
-        SDL_GL_SwapWindow(window);
+        platform::swapBuffers(window);
     }
     }
 
-    SDL_GL_DestroyContext(glCtx);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    platform::destroyWindow(window);
     return 0;
 }

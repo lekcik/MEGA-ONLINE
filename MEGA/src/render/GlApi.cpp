@@ -1,5 +1,5 @@
 #include "render/GlApi.hpp"
-#include <SDL3/SDL.h>
+#include "core/Platform.hpp"
 #include <iostream>
 #include <type_traits>
 
@@ -67,7 +67,7 @@ PFN_glViewport                  glViewport = nullptr;
 bool initGlApi() {
     auto load = [](auto& fn, const char* name) -> bool {
         using FnT = std::remove_reference_t<decltype(fn)>;
-        fn = reinterpret_cast<FnT>(SDL_GL_GetProcAddress(name));
+        fn = reinterpret_cast<FnT>(mega::platform::glGetProcAddress(name));
         if (!fn) {
             std::cerr << "Failed to load OpenGL symbol: " << name << "\n";
             return false;

@@ -2,8 +2,8 @@
 
 #include "core/Config.hpp"
 #include "core/Math3D.hpp"
+#include "core/Platform.hpp"
 #include "world/WorldGrid.hpp"
-#include <SDL3/SDL.h>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -95,13 +95,12 @@ private:
     static constexpr int SAMPLE_RATE = 44100;
     static constexpr int REVERB_BUF_LEN = 16384; // Fixed prime-tap diffused reverb buffer
 
-    static void SDLCALL audioStreamCallback(void* userdata, SDL_AudioStream* stream,
-                                            int additionalAmount, int totalAmount);
+    static void audioStreamCallback(void* userdata, float* outStereo, int frames);
 
     void addOrCoalesceVoiceLocked(const Voice& v);
 
     mutable std::mutex mutex_;
-    SDL_AudioStream* stream_ = nullptr;
+    platform::AudioOutput* stream_ = nullptr;
     std::vector<Voice> voices_;
     GameSettings settings_{};
 

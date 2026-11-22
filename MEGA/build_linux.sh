@@ -2,15 +2,34 @@
 set -euo pipefail
 
 BUILD_DIR="${1:-build}"
+mkdir -p "$BUILD_DIR"
+
 echo "=== Building MEGA (1v1 Zero-Dep P2P Edition) for Linux ==="
-echo "Note: Only CMake + C++20 compiler (+ OpenGL headers) needed. SDL3 is auto-fetched if absent."
+g++ -std=c++20 -O2 -Wall -Wextra -Isrc \
+    src/main.cpp \
+    src/core/Platform.cpp \
+    src/net/NetSession.cpp \
+    src/render/GlApi.cpp \
+    src/render/Shader.cpp \
+    src/render/Framebuffer.cpp \
+    src/render/TextureAtlas.cpp \
+    src/render/WorldMesher.cpp \
+    src/render/BillboardRenderer.cpp \
+    src/render/RobotRenderer.cpp \
+    src/render/HudRenderer.cpp \
+    src/world/WorldGrid.cpp \
+    src/world/LightBaker.cpp \
+    src/world/gen/MegaGenerator.cpp \
+    src/game/Player.cpp \
+    src/game/GameWorld.cpp \
+    src/game/Inventory3D.cpp \
+    src/game/LockpickMinigame.cpp \
+    src/audio/AudioEngine.cpp \
+    -ldl -lpthread \
+    -o "$BUILD_DIR/mega"
 
-cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
-cmake --build "$BUILD_DIR" -j"$(nproc 2>/dev/null || echo 4)"
-
-if [ -f "$BUILD_DIR/mega_tests" ]; then
-    echo "=== Running unit tests ==="
-    "$BUILD_DIR/mega_tests"
+if [ -f "loot_tables.cfg" ]; then
+    cp -f "loot_tables.cfg" "$BUILD_DIR/loot_tables.cfg"
 fi
 
 echo ""
